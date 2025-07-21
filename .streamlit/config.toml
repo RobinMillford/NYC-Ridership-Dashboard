@@ -1,0 +1,22 @@
+[theme]
+# A modern blue for interactive widgets
+primaryColor="#1E90FF"
+
+# A dark gray, which is often more comfortable than pure black
+backgroundColor="#0E1117"
+
+# A slightly lighter dark gray for sidebars and other elements
+secondaryBackgroundColor="#262730"
+
+# Light text for high contrast and readability
+textColor="#fafafa"
+
+# Keeps your preferred font style
+font="serif"
+
+[server]
+# Enable static file serving
+enableStaticServing = true
+
+# Automatically refresh the app when changes are detected
+runOnSave = true
