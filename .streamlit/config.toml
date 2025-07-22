@@ -11,12 +11,8 @@ secondaryBackgroundColor="#262730"
 # Light text for high contrast and readability
 textColor="#fafafa"
 
-# Keeps your preferred font style
 font="serif"
 
 [server]
-# Enable static file serving
 enableStaticServing = true
-
-# Automatically refresh the app when changes are detected
 runOnSave = true
