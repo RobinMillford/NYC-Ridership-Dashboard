@@ -14,7 +14,6 @@ st.set_page_config(
 @st.cache_data
 def load_data(file_path):
     df = pd.read_csv(file_path)
-    # FIX 1: Add the date format for faster parsing
     df['transit_timestamp'] = pd.to_datetime(df['transit_timestamp'], format='%m/%d/%Y %I:%M:%S %p')
     return df
 
@@ -168,7 +167,6 @@ with col1:
 
 with col2:
     st.subheader(f"Ridership Volume Map {title_suffix}")
-    # FIX 2: Use scatter_map and map_style instead of scatter_mapbox and mapbox_style
     fig_map = px.scatter_map(
         station_df, lat="latitude", lon="longitude", hover_name="station_complex",
         size="total_ridership", color="total_ridership",
