@@ -8,8 +8,15 @@ This application provides a deep dive into transit patterns from December 2024, 
 
 **This dashboard is deployed on Streamlit Community Cloud.**
 
-[Dashboard](https://nyc-ridership-dashboard.streamlit.app/)
+[Streamlit Dashboard](https://nyc-ridership-dashboard.streamlit.app/)
 
+**Also I made this Dashboard on Power bi too**
+
+![Alt Text](https://github.com/RobinMillford/NYC-Ridership-Dashboard/blob/main/Page%201.png)
+
+![Alt Text](https://github.com/RobinMillford/NYC-Ridership-Dashboard/blob/main/Page%202.png)
+
+**Clone this repo to get the pbix file or power bi file**
 ## ✨ Features
 
 This dashboard offers a multi-faceted view of the MTA dataset, including:
