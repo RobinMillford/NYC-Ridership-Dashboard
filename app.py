@@ -84,7 +84,7 @@ st.sidebar.header("Filter Options")
 st.sidebar.subheader("Select Date Range")
 start_date_input = st.sidebar.date_input(
     "Start Date", 
-    value=datetime(2024, 12, 1),
+    value=datetime(2024, 12, 24),
     min_value=datetime(2020, 1, 1),
     max_value=datetime(2024, 12, 31)
 )
