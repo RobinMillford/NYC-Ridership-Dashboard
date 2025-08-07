@@ -15,7 +15,8 @@ st.set_page_config(
 @st.cache_data(ttl=86400) # Cache the data for 24 hours
 def load_live_data(start_date, end_date): # Takes datetime objects
     """
-    Fetches MTA data by breaking the request into monthly batches for reliability.
+    Fetches MTA data. Uses a single request for short periods and
+    monthly batches for long periods to ensure reliability.
     """
     try:
         app_token = st.secrets["socrata"]["app_token"]
@@ -24,38 +25,61 @@ def load_live_data(start_date, end_date): # Takes datetime objects
         return None
 
     client = Socrata("data.ny.gov", app_token, timeout=90)
-    
-    date_ranges = pd.date_range(start=start_date, end=end_date, freq='MS')
     all_data = []
-    
-    progress_bar = st.progress(0, text="Initializing data fetch...")
-    status_text = st.empty()
 
-    for i, month_start in enumerate(date_ranges):
-        month_end = month_start + pd.offsets.MonthEnd(1)
+    # --- NEW: Hybrid fetching strategy ---
+    duration_days = (end_date - start_date).days
+    
+    if duration_days < 35:
+        # For short date ranges, make a single request
+        status_text = st.empty()
+        status_text.text(f"Fetching data for {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}...")
         
-        start_str = month_start.strftime('%Y-%m-%dT00:00:00')
-        end_str = month_end.strftime('%Y-%m-%dT23:59:59')
+        start_str = start_date.strftime('%Y-%m-%dT00:00:00')
+        end_str = end_date.strftime('%Y-%m-%dT23:59:59')
         
-        status_text.text(f"Fetching data for {month_start.strftime('%B %Y')}...")
         results = client.get(
             "wujg-7c2s",
             where=f"transit_timestamp between '{start_str}' and '{end_str}'",
             limit=5000000
         )
-        
         if results:
             all_data.append(pd.DataFrame.from_records(results))
-        
-        progress_bar.progress((i + 1) / len(date_ranges), text=f"Fetched {month_start.strftime('%B %Y')}")
+        status_text.text("Data fetched!")
 
-    status_text.text("Combining data...")
+    else:
+        # For long date ranges, use the reliable monthly batching
+        date_ranges = pd.date_range(start=start_date, end=end_date, freq='MS')
+        progress_bar = st.progress(0, text="Initializing data fetch...")
+        status_text = st.empty()
+
+        for i, month_start in enumerate(date_ranges):
+            month_end = month_start + pd.offsets.MonthEnd(1)
+            # Ensure the last month doesn't go past the user's selected end date
+            if month_end > end_date:
+                month_end = end_date
+
+            start_str = month_start.strftime('%Y-%m-%dT00:00:00')
+            end_str = month_end.strftime('%Y-%m-%dT23:59:59')
+            
+            status_text.text(f"Fetching data for {month_start.strftime('%B %Y')}...")
+            results = client.get(
+                "wujg-7c2s",
+                where=f"transit_timestamp between '{start_str}' and '{end_str}'",
+                limit=5000000
+            )
+            
+            if results:
+                all_data.append(pd.DataFrame.from_records(results))
+            
+            progress_bar.progress((i + 1) / len(date_ranges), text=f"Fetched {month_start.strftime('%B %Y')}")
+        status_text.text("Combining data...")
+
     if not all_data:
         raise ValueError("No data returned from the API for the selected period.")
 
     df = pd.concat(all_data, ignore_index=True)
     
-    status_text.text("Processing data...")
     if 'georeference' in df.columns:
         df.drop(columns=['georeference'], inplace=True)
     df['transit_timestamp'] = pd.to_datetime(df['transit_timestamp'])
@@ -64,8 +88,6 @@ def load_live_data(start_date, end_date): # Takes datetime objects
         df[col] = pd.to_numeric(df[col], errors='coerce')
     
     df.dropna(subset=numeric_cols, inplace=True)
-    status_text.empty()
-    progress_bar.empty()
     return df
 
 # --- Data Aggregation for Summaries ---
