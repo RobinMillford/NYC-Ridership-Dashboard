@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import numpy as np
+from sodapy import Socrata
+from datetime import datetime, timedelta
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -10,11 +11,61 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- Data Loading and Processing ---
-@st.cache_data
-def load_data(file_path):
-    df = pd.read_csv(file_path)
-    df['transit_timestamp'] = pd.to_datetime(df['transit_timestamp'], format='%m/%d/%Y %I:%M:%S %p')
+# --- Live Data Loading and Processing from API ---
+@st.cache_data(ttl=86400) # Cache the data for 24 hours
+def load_live_data(start_date, end_date): # Takes datetime objects
+    """
+    Fetches MTA data by breaking the request into monthly batches for reliability.
+    """
+    try:
+        app_token = st.secrets["socrata"]["app_token"]
+    except Exception:
+        st.error("Socrata App Token not found. Please add it to your Streamlit Secrets.")
+        return None
+
+    client = Socrata("data.ny.gov", app_token, timeout=90)
+    
+    date_ranges = pd.date_range(start=start_date, end=end_date, freq='MS')
+    all_data = []
+    
+    progress_bar = st.progress(0, text="Initializing data fetch...")
+    status_text = st.empty()
+
+    for i, month_start in enumerate(date_ranges):
+        month_end = month_start + pd.offsets.MonthEnd(1)
+        
+        start_str = month_start.strftime('%Y-%m-%dT00:00:00')
+        end_str = month_end.strftime('%Y-%m-%dT23:59:59')
+        
+        status_text.text(f"Fetching data for {month_start.strftime('%B %Y')}...")
+        results = client.get(
+            "wujg-7c2s",
+            where=f"transit_timestamp between '{start_str}' and '{end_str}'",
+            limit=5000000
+        )
+        
+        if results:
+            all_data.append(pd.DataFrame.from_records(results))
+        
+        progress_bar.progress((i + 1) / len(date_ranges), text=f"Fetched {month_start.strftime('%B %Y')}")
+
+    status_text.text("Combining data...")
+    if not all_data:
+        raise ValueError("No data returned from the API for the selected period.")
+
+    df = pd.concat(all_data, ignore_index=True)
+    
+    status_text.text("Processing data...")
+    if 'georeference' in df.columns:
+        df.drop(columns=['georeference'], inplace=True)
+    df['transit_timestamp'] = pd.to_datetime(df['transit_timestamp'])
+    numeric_cols = ['ridership', 'transfers', 'latitude', 'longitude']
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    df.dropna(subset=numeric_cols, inplace=True)
+    status_text.empty()
+    progress_bar.empty()
     return df
 
 # --- Data Aggregation for Summaries ---
@@ -28,21 +79,41 @@ def create_station_summary(df):
     ).reset_index()
     return station_summary
 
-# Load the data
-try:
-    df = load_data('MTA_Subway_Hourly_Ridership__2020-2024_20250721.csv')
-    station_summary = create_station_summary(df)
-except FileNotFoundError:
-    st.error("Error: The specified data file was not found.")
-    st.info("Please make sure the CSV file is in the same directory as your Streamlit app.")
-    st.stop()
-
 # --- Sidebar ---
 st.sidebar.header("Filter Options")
-borough_list = ['Overall'] + df['borough'].unique().tolist()
-selected_borough = st.sidebar.selectbox("Select a Borough:", borough_list)
+st.sidebar.subheader("Select Date Range")
+start_date_input = st.sidebar.date_input(
+    "Start Date", 
+    value=datetime(2024, 12, 1),
+    min_value=datetime(2020, 1, 1),
+    max_value=datetime(2024, 12, 31)
+)
+end_date_input = st.sidebar.date_input(
+    "End Date", 
+    value=datetime(2024, 12, 31),
+    min_value=datetime(2020, 1, 1),
+    max_value=datetime(2024, 12, 31)
+)
 
-# --- Filter data based on selection ---
+if start_date_input > end_date_input:
+    st.sidebar.error("Error: Start date must be before end date.")
+    st.stop()
+
+# --- Load and Process Data ---
+try:
+    df = load_live_data(start_date_input, end_date_input)
+    station_summary = create_station_summary(df)
+    st.success("Data loaded successfully!")
+except Exception as e:
+    st.error(f"Failed to load data: {e}")
+    st.info("Please select a valid date range or check the API status.")
+    st.stop()
+    
+# --- The rest of your dashboard code remains the same ---
+st.sidebar.subheader("Select Borough")
+borough_list = ['Overall'] + df['borough'].unique().tolist()
+selected_borough = st.sidebar.selectbox("Borough:", borough_list)
+
 if selected_borough == 'Overall':
     main_df = df
     station_df = station_summary
@@ -54,12 +125,11 @@ else:
     title_suffix = f"in {selected_borough}"
     zoom_level = 11
 
-# --- Main Panel ---
 st.title("🚇 NYC Subway Ridership Dashboard")
-st.markdown("""
-- **This dashboard provides an interactive exploration of New York City's subway system, using hourly MTA turnstile data from 2020 to 2024.** 
-- **Analyze ridership trends over time, compare station performance, and uncover insights into rider behavior.**
-
+# --- FIX: Use the correct date input variables ---
+st.markdown(f"""
+- **This dashboard provides an interactive exploration of NYC's subway system, using hourly MTA turnstile data from {start_date_input.strftime('%Y-%m-%d')} to {end_date_input.strftime('%Y-%m-%d')}.**
+- **Analyze ridership trends, compare station performance, and uncover rider behavior.**
 **Use the Filter Options in the sidebar to begin your analysis.**
 """)
 
@@ -76,7 +146,6 @@ fig_line.update_layout(hovermode="x unified")
 fig_line.update_xaxes(rangeslider_visible=True)
 st.plotly_chart(fig_line, use_container_width=True)
 
-
 # --- Section 2: High-Level Overview ---
 st.markdown("---")
 st.header("High-Level Overview")
@@ -87,11 +156,8 @@ with col9:
     if selected_borough == 'Overall':
         borough_ridership = station_df.groupby('borough')['total_ridership'].sum().reset_index()
         fig_pie = px.pie(
-            borough_ridership,
-            names='borough',
-            values='total_ridership',
-            template='plotly_white',
-            hole=0.4,
+            borough_ridership, names='borough', values='total_ridership',
+            template='plotly_white', hole=0.4,
             color_discrete_sequence=px.colors.qualitative.Antique,
             title=f"Ridership Share by Borough"
         )
@@ -100,26 +166,18 @@ with col9:
         st.subheader(f"Top 5 Station Share {title_suffix}")
         top_stations_in_borough = station_df.nlargest(5, 'total_ridership')
         fig_pie = px.pie(
-            top_stations_in_borough,
-            names='station_complex',
-            values='total_ridership',
-            template='plotly_white',
-            hole=0.4,
+            top_stations_in_borough, names='station_complex', values='total_ridership',
+            template='plotly_white', hole=0.4,
             color_discrete_sequence=px.colors.qualitative.Antique,
             title=f"Top 5 Stations in {selected_borough}"
         )
         st.plotly_chart(fig_pie, use_container_width=True)
 
-
 with col10:
     st.subheader(f"Hourly Ridership Distribution {title_suffix}")
     fig_box = px.box(
-        main_df,
-        x='borough',
-        y='ridership',
-        template='plotly_white',
-        title="Ridership Spread by Borough",
-        color='borough',
+        main_df, x='borough', y='ridership', template='plotly_white',
+        title="Ridership Spread by Borough", color='borough',
         color_discrete_sequence=px.colors.qualitative.Bold
     )
     fig_box.update_traces(boxpoints=False)
@@ -147,7 +205,6 @@ with col11:
 
         total_transfers_metric = station_df['total_transfers'].sum()
         st.metric("Total Transfers", f"{total_transfers_metric:,.0f}")
-
 
 # --- Section 3: Station Analysis ---
 st.markdown("---")
@@ -261,15 +318,3 @@ with col8:
 # --- Expander for Raw Data ---
 with st.expander("📋 Show Raw Dataset Sample"):
     st.dataframe(df.head(1000))
-
-st.markdown(
-    """
-    <hr>
-    <div style='text-align: center;'>
-        <p style='font-size: 1.2em; font-family: "Arial", sans-serif;'>
-            © 2025 All rights reserved by <a href='https://github.com/RobinMillford' target='_blank'><img src='https://img.icons8.com/?size=100&id=LoL4bFzqmAa0&format=png&color=000000' height='30' style='vertical-align: middle;'></a>
-        </p>
-    </div>
-    """,
-    unsafe_allow_html=True
-)

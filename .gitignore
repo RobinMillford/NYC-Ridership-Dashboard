@@ -1,1 +1,6 @@
 myenv
+
+# Ignore Streamlit secrets file
+.streamlit/secrets.toml
+
+.env
